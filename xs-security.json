@@ -1,0 +1,10 @@
+{
+  "xsappname": "audit-log-storing",
+  "tenant-mode": "dedicated",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.export",
+      "description": "Export audit log"
+    }
+  ]
+}
