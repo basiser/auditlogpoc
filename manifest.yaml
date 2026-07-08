@@ -8,3 +8,6 @@ applications:
       - python_buildpack
     health-check-type: http
     health-check-http-endpoint: /health
+      
+    services:
+      - audit-log-xsuaa

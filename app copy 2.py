@@ -20,6 +20,8 @@ class AuditRequest(BaseModel):
     start_date: date
     end_date: date
 
+class ReviewRequest(BaseModel):
+    job_id: str
 
 @app.get("/health")
 def health():
@@ -49,12 +51,23 @@ def download_file(filename: str):
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str):
 
-    status_file = os.path.join(
-        EXPORT_DIR,
-        f"{job_id}.json"
-    )
+    status_file = None
 
-    if not os.path.exists(status_file):
+    for file in os.listdir(EXPORT_DIR):
+
+        if (
+            file.startswith("Joblog-")
+            and job_id in file
+        ):
+
+            status_file = os.path.join(
+                EXPORT_DIR,
+                file
+            )
+
+            break
+
+    if not status_file:
 
         return {
             "job_id": job_id,
@@ -74,7 +87,8 @@ def export_job(
     job_id: str,
     req: AuditRequest,
     filename: str,
-    filepath: str
+    filepath: str,
+    joblog_filename: str
 ):
 
     url = (
@@ -219,9 +233,11 @@ def export_job(
             "error": str(ex)
         }
 
+    # Save job execution result
+
     status_file = os.path.join(
-        EXPORT_DIR,
-        f"{job_id}.json"
+       EXPORT_DIR,
+       joblog_filename
     )
 
     with open(
@@ -252,9 +268,26 @@ def export_audit_log(req: AuditRequest):
 
     job_id = f"JOB_{timestamp}"
 
+    # Common name shared by all files
+    # belonging to the same export job
+
+    base_name = (
+        f"{req.subaccount_id}-"
+        f"{req.start_date.strftime('%Y-%m-%d')}-"
+        f"{req.end_date.strftime('%Y-%m-%d')}-"
+        f"{job_id}"
+    )
+
+    # Raw audit log dump file
+
     filename = (
-        f"audit_{req.subaccount_id}_"
-        f"{timestamp}.csv"
+        f"Dump-{base_name}.csv"
+    )
+
+    # Job execution log file
+
+    joblog_filename = (
+        f"Joblog-{base_name}.json"
     )
 
     filepath = os.path.join(
@@ -268,7 +301,8 @@ def export_audit_log(req: AuditRequest):
             job_id,
             req,
             filename,
-            filepath
+            filepath,
+            joblog_filename
         )
     )
 
@@ -278,4 +312,174 @@ def export_audit_log(req: AuditRequest):
         "status": "initiated",
         "job_id": job_id,
         "file_name": filename
+    }
+@app.post("/review")
+def generate_review_file(req: ReviewRequest):
+
+    dump_file = None
+
+    for file in os.listdir(EXPORT_DIR):
+
+        if (
+            file.startswith("Dump-")
+            and req.job_id in file
+        ):
+            dump_file = file
+            break
+
+    if not dump_file:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Dump file not found"
+        )
+
+    dump_path = os.path.join(
+        EXPORT_DIR,
+        dump_file
+    )
+
+    review_file = dump_file.replace(
+        "Dump-",
+        "Review-"
+    )
+
+    review_path = os.path.join(
+        EXPORT_DIR,
+        review_file
+    )
+
+    # Load review filter definitions
+
+    with open(
+        "filters.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        filters = json.load(f)
+
+    review_count = 0
+    ignored_count = 0
+
+    with open(
+        dump_path,
+        newline="",
+        encoding="utf-8"
+    ) as source, open(
+        review_path,
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as target:
+
+        reader = csv.DictReader(source)
+
+        writer = csv.DictWriter(
+            target,
+            fieldnames=reader.fieldnames
+        )
+
+        writer.writeheader()
+
+        for row in reader:
+
+            ignore = False
+
+            # Filter category
+
+            if row.get("category") in filters["category"]:
+                ignore = True
+
+            # Filter user
+
+            if row.get("user") in filters["user"]:
+                ignore = True
+
+            try:
+
+                # Parse Audit Log JSON message
+
+                msg = json.loads(
+                    row.get("message", "{}")
+                )
+
+                object_type = (
+                    msg.get("object", {})
+                    .get("type")
+                )
+
+                if (
+                    object_type
+                    in filters[
+                        "message.object.type"
+                    ]
+                ):
+                    ignore = True
+
+                data_action = (
+                    msg.get("data", {})
+                    .get("action")
+                )
+
+                if (
+                    data_action
+                    in filters[
+                        "message.data.action"
+                    ]
+                ):
+                    ignore = True
+
+                object_message = (
+                    msg.get("object", {})
+                    .get("id", {})
+                    .get("message")
+                )
+
+                if (
+                    object_message
+                    in filters[
+                        "message.object.id.message"
+                    ]
+                ):
+                    ignore = True
+
+                # Ignore non-empty data field
+
+                if (
+                    msg.get("data", {})
+                    .get("data")
+                ):
+                    ignore = True
+
+                # Ignore non-empty message field
+
+                if (
+                    msg.get("data", {})
+                    .get("message")
+                ):
+                    ignore = True
+
+            except Exception:
+                pass
+
+            if ignore:
+
+                ignored_count += 1
+
+            else:
+
+                review_count += 1
+
+                writer.writerow(row)
+
+    return {
+        "status": "completed",
+        "job_id": req.job_id,
+        "review_count": review_count,
+        "ignored_count": ignored_count,
+        "review_file": review_file,
+        "download_url": (
+            f"/download/{review_file}"
+        )
     }

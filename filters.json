@@ -1,0 +1,25 @@
+{
+  "category": [
+    "audit.data.access",
+    "audit.data-modification"
+  ],
+  "user": [
+    "TPM_SYSTEM_USER"
+  ],
+  "message.object.type": [
+    "Data Read",
+    "Tenant metering",
+    "scim user",
+    "logger.com.sap.sdm.di",
+    "xsrolecollections",
+    "xsrolecollection2samlattribute",
+    "xsrolecollection2role",
+    "xs_rolecollection2user"
+  ],
+  "message.data.action": [
+    "read"
+  ],
+  "message.object.id.message": [
+    "Configuration_Read"
+  ]
+}
