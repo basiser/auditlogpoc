@@ -1,25 +1,40 @@
 {
-  "category": [
-    "audit.data.access",
-    "audit.data-modification"
-  ],
   "user": [
     "TPM_SYSTEM_USER"
   ],
+
+  "category": [
+    "audit.data-access",
+    "audit.data-modification"
+  ],
+
   "message.object.type": [
-    "Data Read",
-    "Tenant metering",
     "scim user",
+    "Tenant Metering",
+    "data read event",
     "logger.com.sap.sdm.di",
     "xsrolecollections",
-    "xsrolecollection2samlattribute",
-    "xsrolecollection2role",
-    "xs_rolecollection2user"
+    "xs_rolecollection2user",
+    "xsrolecollection2role"
   ],
+
   "message.data.action": [
-    "read"
+    "Read"
   ],
+
+  "message.data.objectType": [
+    "PD String Parameter"
+  ],
+
   "message.object.id.message": [
     "Configuration_Read"
+  ],
+
+  "message.data.message": [
+    "__NOTEMPTY__"
+  ],
+
+  "message.data": [
+    "__NOTEMPTY__"
   ]
 }

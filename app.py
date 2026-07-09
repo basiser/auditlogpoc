@@ -34,18 +34,16 @@ def flatten_json(
     items = {}
 
     #
-    # Parse nested JSON string recursively
+    # Parse nested JSON string
     #
     if isinstance(data, str):
 
         value = data.strip()
 
         if (
-            (value.startswith("{")
-             and value.endswith("}"))
-            or
-            (value.startswith("[")
-             and value.endswith("]"))
+            value.startswith("{")
+            or value.startswith("[")
+            or value.startswith('"')
         ):
 
             try:
@@ -472,94 +470,64 @@ def generate_review_file(req: ReviewRequest):
             # Flatten message JSON
             #
             flattened = flatten_json(
-                msg,
-                "message"
+                 msg,
+                 "message"
             )
 
             #
-            # Filter category
+                        #
+            # Create one flat structure
+            # compatible with JNJ filtering
             #
-            if (
-                row.get(
-                    "category"
-                )
-                in filters.get(
-                    "category",
-                    []
-                )
-            ):
-                ignore = True
+            filter_data = {}
+
+            filter_data.update(
+                flattened
+            )
+
+            filter_data["category"] = row.get(
+                "category"
+            )
+
+            filter_data["user"] = row.get(
+                "user"
+            )
 
             #
-            # Filter user
+            # Apply filters dynamically
             #
-            if (
-                row.get(
-                    "user"
-                )
-                in filters.get(
-                    "user",
-                    []
-                )
-            ):
-                ignore = True
+            for field, values in filters.items():
 
-            #
-            # Filter object type
-            #
-            if (
-                flattened.get(
-                    "message.object.type"
+                current_value = filter_data.get(
+                    field
                 )
-                in filters.get(
-                    "message.object.type",
-                    []
-                )
-            ):
-                ignore = True
 
-            #
-            # Filter data action
-            #
-            if (
-                flattened.get(
-                    "message.data.action"
-                )
-                in filters.get(
-                    "message.data.action",
-                    []
-                )
-            ):
-                ignore = True
+                if current_value is None:
+                    continue
 
-            #
-            # Filter message text
-            #
-            if (
-                flattened.get(
-                    "message.object.id.message"
-                )
-                in filters.get(
-                    "message.object.id.message",
-                    []
-                )
-            ):
-                ignore = True
+                #
+                # Handle NOT EMPTY check
+                #
+                if "__NOTEMPTY__" in values:
 
-            #
-            # Filter loggedBy
-            #
-            if (
-                flattened.get(
-                    "message.object.id.loggedBy"
-                )
-                in filters.get(
-                    "message.object.id.loggedBy",
-                    []
-                )
-            ):
-                ignore = True
+                    if (
+                        current_value is not None
+                        and str(current_value).strip() != ""
+                    ):
+                        ignore = True
+                        break
 
+                #
+                # Exact value match
+                #
+                if str(current_value).lower() in [
+                    str(v).lower()
+                    for v in values
+                    if v != "__NOTEMPTY__"
+                ]:
+
+                    ignore = True
+                    break
             if ignore:
 
                 ignored_count += 1
