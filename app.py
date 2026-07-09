@@ -17,11 +17,9 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 class AuditRequest(BaseModel):
     audit_token: str
     subaccount_id: str
-    start_date: date
-    end_date: date
+    start_time: datetime
+    end_time: datetime
 
-class ReviewRequest(BaseModel):
-    job_id: str
 
 # Flatten nested JSON structure
 # into Excel friendly columns
@@ -95,6 +93,178 @@ def flatten_json(
 
     return items
 
+
+#
+# Review generation logic
+#
+
+def create_review_file(
+    job_id: str,
+    dump_file: str
+):
+
+    dump_path = os.path.join(
+        EXPORT_DIR,
+        dump_file
+    )
+
+    review_file = dump_file.replace(
+        "Dump-",
+        "Review-"
+    )
+
+    review_path = os.path.join(
+        EXPORT_DIR,
+        review_file
+    )
+
+    with open(
+        "filters.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        filters = json.load(f)
+
+    review_rows = []
+
+    review_count = 0
+    ignored_count = 0
+
+    with open(
+        dump_path,
+        newline="",
+        encoding="utf-8"
+    ) as source:
+
+        reader = csv.DictReader(source)
+
+        for row in reader:
+
+            ignore = False
+
+            try:
+
+                msg = json.loads(
+                    row.get(
+                        "message",
+                        "{}"
+                    )
+                )
+
+            except Exception:
+
+                msg = {}
+
+            flattened = flatten_json(
+                msg,
+                "message"
+            )
+
+            filter_data = {}
+
+            filter_data.update(
+                flattened
+            )
+
+            filter_data["category"] = row.get(
+                "category"
+            )
+
+            filter_data["user"] = row.get(
+                "user"
+            )
+
+            for field, values in filters.items():
+
+                current_value = filter_data.get(
+                    field
+                )
+
+                if current_value is None:
+                    continue
+
+                if "__NOTEMPTY__" in values:
+
+                    if (
+                        current_value is not None
+                        and str(current_value).strip() != ""
+                    ):
+                        ignore = True
+                        break
+
+                if str(current_value).lower() in [
+                    str(v).lower()
+                    for v in values
+                    if v != "__NOTEMPTY__"
+                ]:
+
+                    ignore = True
+                    break
+
+            if ignore:
+
+                ignored_count += 1
+                continue
+
+            review_count += 1
+
+            review_row = {
+                key: value
+                for key, value
+                in row.items()
+                if key != "message"
+            }
+
+            review_row.update(
+                flattened
+            )
+
+            review_rows.append(
+                review_row
+            )
+
+    all_columns = []
+
+    for row in review_rows:
+
+        for col in row.keys():
+
+            if col not in all_columns:
+
+                all_columns.append(
+                    col
+                )
+
+    with open(
+        review_path,
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as target:
+
+        writer = csv.DictWriter(
+            target,
+            fieldnames=all_columns,
+            extrasaction="ignore"
+        )
+
+        writer.writeheader()
+
+        for row in review_rows:
+
+            writer.writerow(
+                row
+            )
+
+    return {
+        "review_file": review_file,
+        "review_count": review_count,
+        "ignored_count": ignored_count,
+        "download_url": (
+            f"/download/{review_file}"
+        )
+    }
 @app.get("/health")
 def health():
     return {
@@ -120,39 +290,62 @@ def download_file(filename: str):
     )
 
 
-@app.get("/job/{job_id}")
-def get_job_status(job_id: str):
+@app.get("/jobs")
+def get_jobs():
 
-    status_file = None
+    jobs = []
 
     for file in os.listdir(EXPORT_DIR):
 
-        if (
-            file.startswith("Joblog-")
-            and job_id in file
+        if not file.startswith(
+            "Joblog-"
         ):
+            continue
 
-            status_file = os.path.join(
-                EXPORT_DIR,
-                file
+        file_path = os.path.join(
+            EXPORT_DIR,
+            file
+        )
+
+        try:
+
+            with open(
+                file_path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                job_result = json.load(f)
+
+                jobs.append(
+                    job_result
+                )
+
+        except Exception as ex:
+
+            jobs.append(
+                {
+                    "file": file,
+                    "status": "invalid",
+                    "error": str(ex)
+                }
             )
 
-            break
+    #
+    # Sort newest first
+    #
+    jobs.sort(
+        key=lambda x: x.get(
+            "job_id",
+            ""
+        ),
+        reverse=True
+    )
 
-    if not status_file:
-
-        return {
-            "job_id": job_id,
-            "status": "running"
-        }
-
-    with open(
-        status_file,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        return json.load(f)
+    return {
+        "count": len(jobs),
+        "jobs": jobs
+    }
 
 
 def export_job(
@@ -186,8 +379,8 @@ def export_job(
 
             # First request
             params = {
-                "from": req.start_date.strftime("%Y-%m-%d"),
-                "to": req.end_date.strftime("%Y-%m-%d")
+                "from": req.start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "to": req.end_time.strftime("%Y-%m-%dT%H:%M:%S")
             }
 
             while True:
@@ -287,14 +480,36 @@ def export_job(
             2
         )
 
+        review_result = create_review_file(
+            job_id=job_id,
+            dump_file=filename
+        )
         result = {
             "job_id": job_id,
             "status": "completed",
+
             "record_count": total_records,
-            "file_name": filename,
+
+            "dump_file": filename,
+
             "file_path": filepath,
+
             "file_size_mb": filesize_mb,
-            "download_url": f"/download/{filename}"
+
+            "dump_download_url":
+                f"/download/{filename}",
+
+            "review_file":
+                review_result["review_file"],
+
+            "review_count":
+                review_result["review_count"],
+
+            "ignored_count":
+                review_result["ignored_count"],
+
+            "review_download_url":
+                review_result["download_url"]
         }
 
     except Exception as ex:
@@ -328,7 +543,7 @@ def export_job(
 @app.post("/export")
 def export_audit_log(req: AuditRequest):
 
-    if req.start_date >= req.end_date:
+    if req.start_time >= req.end_time:
         raise HTTPException(
             status_code=400,
             detail="start_date must be earlier than end_date"
@@ -345,8 +560,8 @@ def export_audit_log(req: AuditRequest):
 
     base_name = (
         f"{req.subaccount_id}-"
-        f"{req.start_date.strftime('%Y-%m-%d')}-"
-        f"{req.end_date.strftime('%Y-%m-%d')}-"
+        f"{req.start_time.strftime('%Y-%m-%d')}-"
+        f"{req.end_time.strftime('%Y-%m-%d')}-"
         f"{job_id}"
     )
 
@@ -385,231 +600,90 @@ def export_audit_log(req: AuditRequest):
         "job_id": job_id,
         "file_name": filename
     }
-    
-@app.post("/review")
-def generate_review_file(req: ReviewRequest):
+@app.get("/review/{job_id}")
+def get_review_file(job_id: str):
 
-    dump_file = None
+    status_file = None
 
     for file in os.listdir(EXPORT_DIR):
 
         if (
-            file.startswith("Dump-")
-            and req.job_id in file
+            file.startswith("Joblog-")
+            and job_id in file
         ):
-            dump_file = file
+
+            status_file = os.path.join(
+                EXPORT_DIR,
+                file
+            )
+
             break
 
-    if not dump_file:
+    if not status_file:
 
         raise HTTPException(
             status_code=404,
-            detail="Dump file not found"
+            detail="Job not found"
         )
 
-    dump_path = os.path.join(
-        EXPORT_DIR,
-        dump_file
+    with open(
+        status_file,
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        job_result = json.load(f)
+
+    status = job_result.get(
+        "status"
     )
 
-    review_file = dump_file.replace(
-        "Dump-",
-        "Review-"
+    #
+    # Export/Review still running
+    #
+    if status != "completed":
+
+        return {
+            "job_id": job_id,
+            "status": status,
+            "message": (
+                "Review file is not ready yet"
+            )
+        }
+
+    review_file = job_result.get(
+        "review_file"
     )
+
+    if not review_file:
+
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "message": (
+                "Review file not found"
+            )
+        }
 
     review_path = os.path.join(
         EXPORT_DIR,
         review_file
     )
 
-    #
-    # Load review filter definitions
-    #
-    with open(
-        "filters.json",
-        "r",
-        encoding="utf-8"
-    ) as f:
+    if not os.path.exists(
+        review_path
+    ):
 
-        filters = json.load(f)
-
-    review_rows = []
-
-    review_count = 0
-    ignored_count = 0
-
-    with open(
-        dump_path,
-        newline="",
-        encoding="utf-8"
-    ) as source:
-
-        reader = csv.DictReader(source)
-
-        for row in reader:
-
-            ignore = False
-
-            try:
-
-                #
-                # Parse message JSON
-                #
-                msg = json.loads(
-                    row.get(
-                        "message",
-                        "{}"
-                    )
-                )
-
-            except Exception:
-
-                msg = {}
-
-            #
-            # Flatten message JSON
-            #
-            flattened = flatten_json(
-                 msg,
-                 "message"
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "message": (
+                "Review file does not exist"
             )
+        }
 
-            #
-                        #
-            # Create one flat structure
-            # compatible with JNJ filtering
-            #
-            filter_data = {}
-
-            filter_data.update(
-                flattened
-            )
-
-            filter_data["category"] = row.get(
-                "category"
-            )
-
-            filter_data["user"] = row.get(
-                "user"
-            )
-
-            #
-            # Apply filters dynamically
-            #
-            for field, values in filters.items():
-
-                current_value = filter_data.get(
-                    field
-                )
-
-                if current_value is None:
-                    continue
-
-                #
-                # Handle NOT EMPTY check
-                #
-                if "__NOTEMPTY__" in values:
-
-                    if (
-                        current_value is not None
-                        and str(current_value).strip() != ""
-                    ):
-                        ignore = True
-                        break
-
-                #
-                # Exact value match
-                #
-                if str(current_value).lower() in [
-                    str(v).lower()
-                    for v in values
-                    if v != "__NOTEMPTY__"
-                ]:
-
-                    ignore = True
-                    break
-            if ignore:
-
-                ignored_count += 1
-
-                continue
-
-            review_count += 1
-
-            #
-            # Keep original columns
-            #
-            review_row = {
-                key: value
-                for key, value
-                in row.items()
-                if key != "message"
-            }
-
-            #
-            # Add flattened message columns
-            #
-            review_row.update(
-                flattened
-            )
-
-            review_rows.append(
-                review_row
-            )
-
-    #
-    # Build dynamic columns
-    #
-    all_columns = []
-
-    for row in review_rows:
-
-        for col in row.keys():
-
-            if col not in all_columns:
-
-                all_columns.append(
-                    col
-                )
-
-    #
-    # Write review file
-    #
-    with open(
-        review_path,
-        "w",
-        newline="",
-        encoding="utf-8"
-    ) as target:
-
-        writer = csv.DictWriter(
-            target,
-            fieldnames=all_columns,
-            extrasaction="ignore"
-        )
-
-        writer.writeheader()
-
-        for row in review_rows:
-
-            writer.writerow(
-                row
-            )
-
-    print(
-        f"Review completed. "
-        f"job_id={req.job_id}, "
-        f"review_count={review_count}, "
-        f"ignored_count={ignored_count}"
+    return FileResponse(
+        path=review_path,
+        media_type="text/csv",
+        filename=review_file
     )
-
-    return {
-        "status": "completed",
-        "job_id": req.job_id,
-        "review_count": review_count,
-        "ignored_count": ignored_count,
-        "review_file": review_file,
-        "download_url": (
-            f"/download/{review_file}"
-        )
-    }

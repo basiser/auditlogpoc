@@ -1,0 +1,13 @@
+{
+  "job_id": "JOB_20260709040929",
+  "status": "completed",
+  "record_count": 4770,
+  "dump_file": "Dump-string-2026-07-09-2026-07-09-JOB_20260709040929.csv",
+  "file_path": "exports/Dump-string-2026-07-09-2026-07-09-JOB_20260709040929.csv",
+  "file_size_mb": 9.96,
+  "dump_download_url": "/download/Dump-string-2026-07-09-2026-07-09-JOB_20260709040929.csv",
+  "review_file": "Review-string-2026-07-09-2026-07-09-JOB_20260709040929.csv",
+  "review_count": 142,
+  "ignored_count": 4628,
+  "review_download_url": "/download/Review-string-2026-07-09-2026-07-09-JOB_20260709040929.csv"
+}
