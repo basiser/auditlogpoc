@@ -14,6 +14,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain.tools import tool
 from langchain_core.messages import AIMessageChunk
 
+# ===== LangChain / Deep Agent =====
+from deepagents import create_deep_agent
+from deepagents.backends.filesystem import FilesystemBackend
+
 # ===== MCP (NEW) =====
 # ✅ Import MCP tool loader from external module
 # This keeps MCP logic decoupled from agent logic
@@ -66,7 +70,16 @@ def create_llm(config: AppConfig):
 
 
 # =========================================================
-# 3. LOCAL TOOLS (unchanged)
+# 3. Define Skill location
+# =========================================================
+
+backend = FilesystemBackend(
+    root_dir=".",
+    virtual_mode=True
+)
+
+# =========================================================
+# 4. LOCAL TOOLS (unchanged)
 # =========================================================
 
 @tool
@@ -156,7 +169,7 @@ def analyze_ticket_summary(ticket_data: str) -> str:
 
     return "\n".join(summary_lines)
 # =========================================================
-# 4. AGENT CREATION (integrated with MCP)
+# 5. AGENT CREATION (integrated with MCP)
 # =========================================================
 async def create_app():
     """
@@ -208,30 +221,19 @@ async def create_app():
     # ✅ MCP INTEGRATION END
     # =====================================================
 
-    agent = create_agent(
-        llm,
+    agent = create_deep_agent(
+        model=llm,
         tools=all_tools,  # ✅ Now includes MCP tools
-        system_prompt=(
-            "You are an assistant for SAP BTP operations and ticket data analysis. "
-            "Core rules: "
-            "- Always call tools for external data and only use tool-returned data; do not invent or estimate numbers. "
-            "- For each conclusion based on tools, list the tool name, parameters, and returned meta in the response JSON under 'tool_calls'. "
-            "- For ticket analysis return both: machine JSON (month, ticket_count, top_activity {name,count}, top_specific_activity {name,count}, notes, tool_calls, pii_redacted) and a 3–5 line human summary plus a Markdown table. "
-            "For ticket analysis, retrieve ticket data first and then analyze it. "
-            "- Never reveal raw PII; redact it before output and set 'pii_redacted': true. Require explicit user confirmation to un-redact. "
-            "- If a tool errors or returns empty/incomplete data, state which tool and parameters were attempted and suggest next steps. "
-            "- Default year is 2026 when unspecified. "
-            "- Start replies with a short summary (3–5 lines) and finish with a clear next-step suggestion. "
-            "- Do not log or print secrets, API keys, or raw file paths."
-        ),
-        checkpointer=InMemorySaver(),  # ✅ Maintains conversation memory
+        backend=backend,
+        skills=["skills"],
+        checkpointer=InMemorySaver()  # ✅ Maintains conversation memory
     )
 
     return agent
 
 
 # =========================================================
-# 5. CLI TEST (async adapted)
+# 6. CLI TEST (async adapted)
 # =========================================================
 # --- CHANGE START (Plan A): switch REPL to async and use astream ---
 async def main_async():
