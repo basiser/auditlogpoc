@@ -1,0 +1,1 @@
+cd /tmp && python3 parse_audit_logs.py

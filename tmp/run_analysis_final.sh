@@ -1,0 +1,1 @@
+cd /tmp && python3 analyze_audit2.py 2>&1

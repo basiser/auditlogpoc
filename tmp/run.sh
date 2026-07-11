@@ -1,0 +1,1 @@
+cd /tmp && python3 get_execution.py 2>&1
